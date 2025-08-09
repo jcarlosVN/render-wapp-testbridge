@@ -232,6 +232,97 @@ func cleanDatabase(dbPath string, logger waLog.Logger) error {
 	return nil
 }
 
+// Recreate WhatsApp client without restarting the entire service
+func recreateClient(logger waLog.Logger) error {
+	logger.Infof("🔄 Recreating WhatsApp client with clean database...")
+	
+	// Disconnect current client if exists
+	if client != nil {
+		client.Disconnect()
+		client = nil
+	}
+	
+	// Clean database
+	if err := cleanDatabase("store", logger); err != nil {
+		return fmt.Errorf("failed to clean database: %v", err)
+	}
+	
+	// Create new database connection
+	dbLog := waLog.Stdout("Database", "INFO", true)
+	container, err := sqlstore.New(context.Background(), "sqlite3", "file:store/whatsapp.db?_foreign_keys=on", dbLog)
+	if err != nil {
+		return fmt.Errorf("failed to create new database connection: %v", err)
+	}
+	
+	// Create new device store
+	deviceStore := container.NewDevice()
+	logger.Infof("Created new device store")
+	
+	// Create new client
+	client = whatsmeow.NewClient(deviceStore, logger)
+	if client == nil {
+		return fmt.Errorf("failed to create new WhatsApp client")
+	}
+	
+	// Add event handlers to new client
+	client.AddEventHandler(func(evt interface{}) {
+		switch evt.(type) {
+		case *events.Connected:
+			mu.Lock()
+			needsAuth = false
+			currentQR = ""
+			mu.Unlock()
+			logger.Infof("✅ Connected to WhatsApp")
+		case *events.LoggedOut:
+			mu.Lock()
+			needsAuth = true
+			currentQR = ""
+			mu.Unlock()
+			logger.Warnf("🔴 Device logged out, need to restart for new QR")
+			go func() {
+				time.Sleep(2 * time.Second)
+				restartAuthentication(logger)
+			}()
+		}
+	})
+	
+	// Start authentication process
+	mu.Lock()
+	needsAuth = true
+	currentQR = ""
+	mu.Unlock()
+	
+	logger.Infof("🔐 Starting authentication for new client...")
+	qrChan, _ := client.GetQRChannel(context.Background())
+	err = client.Connect()
+	if err != nil {
+		return fmt.Errorf("failed to connect new client: %v", err)
+	}
+	
+	// Handle QR codes for new client
+	go func() {
+		for evt := range qrChan {
+			if evt.Event == "code" {
+				mu.Lock()
+				currentQR = evt.Code
+				needsAuth = true
+				mu.Unlock()
+				logger.Infof("📱 New QR Code available at /api/qr")
+			} else if evt.Event == "success" {
+				mu.Lock()
+				needsAuth = false
+				currentQR = ""
+				mu.Unlock()
+				logger.Infof("✅ QR Authentication successful!")
+				break
+			}
+		}
+	}()
+	
+	logger.Infof("✅ Client recreated successfully")
+	return nil
+}
+
 // Generate a simple waveform for voice messages
 func generateSimpleWaveform(duration uint32) []byte {
 	const waveformLength = 64
@@ -372,9 +463,9 @@ func startRESTServer(port string) {
 							fetch('/api/clean', {method: 'POST'})
 							.then(response => response.json())
 							.then(data => {
-								alert(data.message);
+								alert(data.message + ' Redirigiendo al QR...');
 								if (data.success) {
-									setTimeout(() => window.location.reload(), 3000);
+									setTimeout(() => window.location.href = '/api/qr', 2000);
 								}
 							})
 							.catch(error => alert('Error: ' + error));
@@ -544,40 +635,18 @@ func startRESTServer(port string) {
 		logger := waLog.Stdout("Clean", "INFO", true)
 		logger.Warnf("🧹 Manual database cleanup requested")
 		
-		// Disconnect client if exists
-		if client != nil {
-			client.Disconnect()
-		}
-		
-		// Clean database
-		if err := cleanDatabase("store", logger); err != nil {
-			logger.Errorf("Failed to clean database: %v", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"success": false,
-				"message": fmt.Sprintf("Failed to clean database: %v", err),
-			})
-			return
-		}
-		
-		mu.Lock()
-		needsAuth = true
-		currentQR = ""
-		mu.Unlock()
+		// Recreate client without service restart
+		go func() {
+			if err := recreateClient(logger); err != nil {
+				logger.Errorf("Failed to recreate client: %v", err)
+			}
+		}()
 		
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
-			"message": "Database cleaned successfully. Application will restart authentication.",
+			"message": "Database cleaned successfully. New QR code will be available shortly at /api/qr",
 		})
-		
-		// Restart the application
-		go func() {
-			time.Sleep(2 * time.Second)
-			logger.Warnf("🔄 Restarting application after database cleanup...")
-			os.Exit(0) // Render will restart the service automatically
-		}()
 	})
 
 	// Force re-authentication endpoint
