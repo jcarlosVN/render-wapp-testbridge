@@ -214,6 +214,24 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 	return true, fmt.Sprintf("Message sent to %s", recipient)
 }
 
+// Clean corrupted database if foreign key errors occur
+func cleanDatabase(dbPath string, logger waLog.Logger) error {
+	logger.Warnf("🧹 Cleaning potentially corrupted database...")
+	
+	// Remove the database file
+	if err := os.RemoveAll("store"); err != nil {
+		return fmt.Errorf("failed to remove store directory: %v", err)
+	}
+	
+	// Recreate the directory
+	if err := os.MkdirAll("store", 0755); err != nil {
+		return fmt.Errorf("failed to recreate store directory: %v", err)
+	}
+	
+	logger.Infof("✅ Database cleaned successfully")
+	return nil
+}
+
 // Generate a simple waveform for voice messages
 func generateSimpleWaveform(duration uint32) []byte {
 	const waveformLength = 64
@@ -332,8 +350,11 @@ func startRESTServer(port string) {
 				<p><strong>GET /api/qr</strong> - Ver código QR</p>
 				<p><strong>GET /api/status</strong> - Estado del servicio</p>
 				<hr>
-				<button onclick="forceReauth()" style="background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 10px 0;">
+				<button onclick="forceReauth()" style="background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px;">
 					🔄 Forzar nueva autenticación
+				</button>
+				<button onclick="cleanDatabase()" style="background: #fd7e14; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px;">
+					🧹 Limpiar base de datos
 				</button>
 				<script>
 					function forceReauth() {
@@ -344,6 +365,20 @@ func startRESTServer(port string) {
 							setTimeout(() => window.location.href = '/api/qr', 2000);
 						})
 						.catch(error => alert('Error: ' + error));
+					}
+					
+					function cleanDatabase() {
+						if (confirm('¿Estás seguro? Esto eliminará la sesión actual y requerirá una nueva autenticación QR.')) {
+							fetch('/api/clean', {method: 'POST'})
+							.then(response => response.json())
+							.then(data => {
+								alert(data.message);
+								if (data.success) {
+									setTimeout(() => window.location.reload(), 3000);
+								}
+							})
+							.catch(error => alert('Error: ' + error));
+						}
 					}
 				</script>
 			</div>
@@ -499,6 +534,52 @@ func startRESTServer(port string) {
 		json.NewEncoder(w).Encode(status)
 	})
 
+	// Clean database endpoint (for fixing corruption)
+	http.HandleFunc("/api/clean", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		
+		logger := waLog.Stdout("Clean", "INFO", true)
+		logger.Warnf("🧹 Manual database cleanup requested")
+		
+		// Disconnect client if exists
+		if client != nil {
+			client.Disconnect()
+		}
+		
+		// Clean database
+		if err := cleanDatabase("store", logger); err != nil {
+			logger.Errorf("Failed to clean database: %v", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": false,
+				"message": fmt.Sprintf("Failed to clean database: %v", err),
+			})
+			return
+		}
+		
+		mu.Lock()
+		needsAuth = true
+		currentQR = ""
+		mu.Unlock()
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Database cleaned successfully. Application will restart authentication.",
+		})
+		
+		// Restart the application
+		go func() {
+			time.Sleep(2 * time.Second)
+			logger.Warnf("🔄 Restarting application after database cleanup...")
+			os.Exit(0) // Render will restart the service automatically
+		}()
+	})
+
 	// Force re-authentication endpoint
 	http.HandleFunc("/api/reauth", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -628,10 +709,24 @@ func main() {
 		return
 	}
 
+	// Try to connect to database
 	container, err := sqlstore.New(context.Background(), "sqlite3", "file:store/whatsapp.db?_foreign_keys=on", dbLog)
 	if err != nil {
 		logger.Errorf("Failed to connect to database: %v", err)
-		return
+		
+		// If connection fails, try cleaning the database
+		logger.Warnf("Attempting to clean potentially corrupted database...")
+		if cleanErr := cleanDatabase("store", logger); cleanErr != nil {
+			logger.Errorf("Failed to clean database: %v", cleanErr)
+			return
+		}
+		
+		// Retry connection after cleaning
+		container, err = sqlstore.New(context.Background(), "sqlite3", "file:store/whatsapp.db?_foreign_keys=on", dbLog)
+		if err != nil {
+			logger.Errorf("Failed to connect to database after cleaning: %v", err)
+			return
+		}
 	}
 
 	// Get device store - This contains session information
@@ -641,6 +736,24 @@ func main() {
 			// No device exists, create one
 			deviceStore = container.NewDevice()
 			logger.Infof("Created new device")
+		} else if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+			// Database is corrupted, clean and retry
+			logger.Warnf("Database corruption detected (FOREIGN KEY constraint), cleaning...")
+			if cleanErr := cleanDatabase("store", logger); cleanErr != nil {
+				logger.Errorf("Failed to clean corrupted database: %v", cleanErr)
+				return
+			}
+			
+			// Reconnect to cleaned database
+			container, err = sqlstore.New(context.Background(), "sqlite3", "file:store/whatsapp.db?_foreign_keys=on", dbLog)
+			if err != nil {
+				logger.Errorf("Failed to reconnect to cleaned database: %v", err)
+				return
+			}
+			
+			// Create new device after cleanup
+			deviceStore = container.NewDevice()
+			logger.Infof("Created new device after database cleanup")
 		} else {
 			logger.Errorf("Failed to get device: %v", err)
 			return
