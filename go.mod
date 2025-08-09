@@ -6,7 +6,6 @@ toolchain go1.24.4
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.28
-	github.com/mdp/qrterminal v1.0.1
 	go.mau.fi/whatsmeow v0.0.0-20250723174453-937d77661333
 	google.golang.org/protobuf v1.36.6
 )
@@ -26,5 +25,4 @@ require (
 	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
 	golang.org/x/text v0.27.0 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )
