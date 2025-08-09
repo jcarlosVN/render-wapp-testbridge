@@ -238,19 +238,39 @@ func generateSimpleWaveform(duration uint32) []byte {
 	return waveform
 }
 
-// Generate QR as HTML image or link
+// Generate QR as HTML image with multiple options
 func generateQRHTML(qrString string) string {
-	// Generate QR code as image URL
+	// URL encode the QR string for better API compatibility
 	return fmt.Sprintf(`
-		<div class="qr-container">
-			<img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=%s" 
-				 alt="QR Code" 
-				 style="border: 1px solid #ddd; padding: 10px; background: white;">
-			<br>
-			<small style="margin-top: 10px; display: block; color: #666;">
-				Si el QR no carga, usa este texto:<br>
-				<code style="font-size: 10px; word-break: break-all;">%s</code>
-			</small>
+		<div class="qr-container" style="margin: 20px 0;">
+			<!-- Primary QR with high quality -->
+			<div style="margin-bottom: 15px;">
+				<img id="qr-primary" src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&format=png&error=M&margin=10&data=%s" 
+					 alt="WhatsApp QR Code" 
+					 style="border: 2px solid #25D366; padding: 15px; background: white; border-radius: 10px; max-width: 100%%;"
+					 onerror="this.style.display='none'; document.getElementById('qr-backup').style.display='block';">
+			</div>
+			
+			<!-- Backup QR with different service -->
+			<div id="qr-backup" style="display: none; margin-bottom: 15px;">
+				<img src="https://chart.googleapis.com/chart?chs=300x300&cht=qr&chl=%s" 
+					 alt="WhatsApp QR Code (Backup)" 
+					 style="border: 2px solid #25D366; padding: 15px; background: white; border-radius: 10px; max-width: 100%%;">
+			</div>
+			
+			<!-- Manual refresh button -->
+			<button onclick="location.reload()" 
+					style="background: #25D366; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 10px 0;">
+				🔄 Generar nuevo QR
+			</button>
+			
+			<div style="margin-top: 15px; font-size: 12px; color: #666;">
+				<strong>💡 Consejos:</strong><br>
+				• Asegúrate que WhatsApp esté actualizado<br>
+				• Acerca bien la cámara al QR<br>
+				• Si no funciona, recarga la página<br>
+				• El código expira en unos minutos
+			</div>
 		</div>
 	`, qrString, qrString)
 }
@@ -316,10 +336,14 @@ func startRESTServer(port string) {
 				<style>
 					body { font-family: Arial, sans-serif; text-align: center; padding: 10px; background: #f5f5f5; }
 					.container { max-width: 400px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-					.qr { font-family: monospace; font-size: 6px; line-height: 6px; margin: 20px 0; background: white; padding: 10px; border: 1px solid #ddd; }
+					.qr-container img { max-width: 90%; height: auto; }
 					.status { color: #dc3545; font-weight: bold; margin: 15px 0; }
-					.instructions { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; }
+					.instructions { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; text-align: left; }
 					.refresh { color: #28a745; }
+					@media (max-width: 480px) {
+						.container { padding: 15px; margin: 10px; }
+						.qr-container img { max-width: 95%; }
+					}
 				</style>
 				<script>
 					setTimeout(() => {
