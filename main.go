@@ -424,7 +424,7 @@ func startRESTServer(port string) {
 					async function goToQR() {
 						const token = await getQRToken();
 						if (token) {
-							window.location.href = `/api/qr?token=${token}`;
+							window.location.href = '/api/qr?token=' + token;
 						} else {
 							window.location.href = '/api/qr';
 						}
