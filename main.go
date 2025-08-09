@@ -16,6 +16,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/mdp/qrterminal"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -238,15 +239,7 @@ func generateSimpleWaveform(duration uint32) []byte {
 	return waveform
 }
 
-// Generate QR as image URL using qr-server.com API
-func generateQRImageURL(qrString string) string {
-	// Use online QR generator service - qr-server.com
-	// This generates a proper QR code image that can be scanned
-	return fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", 
-		strings.ReplaceAll(qrString, " ", "%20"))
-}
-
-// Generate QR as ASCII art for HTML display (fallback)
+// Generate QR as ASCII art for HTML display
 func generateQRHTML(qrString string) string {
 	// Simple QR to ASCII conversion using basic blocks
 	return strings.ReplaceAll(strings.ReplaceAll(qrString, "█", "██"), " ", "  ")
@@ -256,13 +249,11 @@ func generateQRHTML(qrString string) string {
 func startRESTServer(port string) {
 	// Health check endpoint
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintf(w, `
 		<html>
 		<head>
 			<title>WhatsApp Render Bridge</title>
-			<meta charset="UTF-8">
-			<meta name="viewport" content="width=device-width, initial-scale=1">
 			<style>
 				body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
 				.container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
@@ -304,69 +295,60 @@ func startRESTServer(port string) {
 		needsAuthStatus := needsAuth
 		mu.RUnlock()
 
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Type", "text/html")
 
 		if qr != "" && needsAuthStatus {
-			qrImageURL := generateQRImageURL(qr)
 			fmt.Fprintf(w, `
 			<html>
 			<head>
 				<title>WhatsApp QR Code</title>
-				<meta charset="UTF-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1">
 				<style>
 					body { font-family: Arial, sans-serif; text-align: center; padding: 10px; background: #f5f5f5; }
 					.container { max-width: 400px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-					.qr-image { margin: 20px 0; padding: 15px; background: white; border: 2px solid #25D366; border-radius: 10px; }
-					.qr-image img { max-width: 100%%; height: auto; border-radius: 5px; }
+					.qr { font-family: monospace; font-size: 6px; line-height: 6px; margin: 20px 0; background: white; padding: 10px; border: 1px solid #ddd; }
 					.status { color: #dc3545; font-weight: bold; margin: 15px 0; }
-					.instructions { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; text-align: left; }
-					.refresh { color: #28a745; font-weight: bold; }
-					.whatsapp-color { color: #25D366; }
+					.instructions { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; }
+					.refresh { color: #28a745; }
 				</style>
 				<script>
 					setTimeout(() => {
 						location.reload();
-					}, 10000);
+					}, 5000);
 				</script>
 			</head>
 			<body>
 				<div class="container">
-					<h2><span class="whatsapp-color">📱 Escanea con WhatsApp móvil</span></h2>
+					<h2>📱 Escanea con WhatsApp móvil</h2>
 					<div class="status">🔴 Desconectado - Necesita autenticación</div>
-					<div class="qr-image">
-						<img src="%s" alt="QR Code para WhatsApp Web" />
-					</div>
+					<div class="qr">%s</div>
 					<div class="instructions">
 						<strong>📋 Instrucciones:</strong><br>
 						1. Abre WhatsApp en tu teléfono<br>
 						2. Toca Menú ⋮ > WhatsApp Web<br>
-						3. Escanea este código QR<br>
-						4. ¡Listo! Podrás enviar mensajes
+						3. Escanea este código QR
 					</div>
 					<div class="refresh">🔄 Auto-refresh en 5 segundos...</div>
 					<p><a href="/">← Volver al inicio</a></p>
 				</div>
 			</body>
-			</html>`, qrImageURL)
+			</html>`, generateQRHTML(qr))
 		} else if client != nil && client.IsConnected() {
 			fmt.Fprintf(w, `
 			<html>
 			<head>
 				<title>WhatsApp Status</title>
-				<meta charset="UTF-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1">
 				<style>
 					body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
 					.container { max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
 					.status { color: #28a745; font-weight: bold; font-size: 18px; margin: 20px 0; }
 					.uptime { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; }
-					.whatsapp-color { color: #25D366; }
 				</style>
 			</head>
 			<body>
 				<div class="container">
-					<h2><span class="whatsapp-color">✅ WhatsApp Conectado</span></h2>
+					<h2>✅ WhatsApp Conectado</h2>
 					<div class="status">🟢 Servicio activo y funcionando</div>
 					<div class="uptime">
 						<strong>⏱️ Uptime:</strong> %s
@@ -384,13 +366,11 @@ func startRESTServer(port string) {
 			<html>
 			<head>
 				<title>WhatsApp Status</title>
-				<meta charset="UTF-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1">
 				<style>
 					body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
 					.container { max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
 					.status { color: #ffc107; font-weight: bold; font-size: 16px; margin: 20px 0; }
-					.loading { color: #6c757d; }
 				</style>
 				<script>
 					setTimeout(() => {
@@ -400,7 +380,7 @@ func startRESTServer(port string) {
 			</head>
 			<body>
 				<div class="container">
-					<h2><span class="loading">⏳ Iniciando conexión...</span></h2>
+					<h2>⏳ Iniciando conexión...</h2>
 					<div class="status">🟡 Estableciendo conexión con WhatsApp...</div>
 					<p>Por favor espera unos segundos.</p>
 					<p>🔄 Auto-refresh en 3 segundos...</p>
