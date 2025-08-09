@@ -1,9 +1,19 @@
 services:
-  # A Docker web service
   - type: web
-    name: fastapi-example
-    runtime: python
-    plan: free
-    autoDeploy: false
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    name: whatsapp-render-bridge
+    env: go
+    plan: starter
+    region: oregon  # o tu región preferida
+    buildCommand: go mod download && go build -o main main.go
+    startCommand: ./main
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: GO_VERSION
+        value: "1.21"
+      - key: CGO_ENABLED
+        value: "1"
+    # Health check para que Render sepa que el servicio está funcionando
+    healthCheckPath: /api/status
+    # Auto-deploy desde GitHub
+    autoDeploy: true
