@@ -55,7 +55,7 @@ git push origin main
 
 ### Enviar mensaje de texto
 ```bash
-curl -X POST https://tu-app.onrender.com/api/send \
+curl -X POST https://render-wapp-testbridge.onrender.com/api/send \
   -H "Content-Type: application/json" \
   -d '{
     "recipient": "51959812636",
