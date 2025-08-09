@@ -658,33 +658,48 @@ func startRESTServer(port string) {
 
 // Helper functions for status display
 func getStatusClass() string {
-	if client != nil && client.IsConnected() {
-		return "connected"
-	}
 	mu.RLock()
 	needsAuthStatus := needsAuth
 	mu.RUnlock()
+	
+	// First check if we need authentication
 	if needsAuthStatus {
 		return "disconnected"
 	}
+	
+	// Then check if client exists and is actually connected
+	if client != nil && client.IsConnected() {
+		return "connected"
+	}
+	
 	return "pending"
 }
 
 func getStatusText() string {
-	if client != nil && client.IsConnected() {
-		return "🟢 Conectado y funcionando"
-	}
 	mu.RLock()
 	needsAuthStatus := needsAuth
 	mu.RUnlock()
+	
+	// First check if we need authentication
 	if needsAuthStatus {
 		return "🔴 Necesita autenticación QR"
 	}
+	
+	// Then check if client exists and is actually connected
+	if client != nil && client.IsConnected() {
+		return "🟢 Conectado y funcionando"
+	}
+	
 	return "🟡 Iniciando conexión..."
 }
 
 func main() {
 	startTime = time.Now()
+	
+	// Initialize needsAuth to true on startup
+	mu.Lock()
+	needsAuth = true
+	mu.Unlock()
 	
 	// Set up logger
 	logger := waLog.Stdout("Client", "INFO", true)
