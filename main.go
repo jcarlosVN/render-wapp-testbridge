@@ -16,7 +16,6 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/mdp/qrterminal"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -239,17 +238,28 @@ func generateSimpleWaveform(duration uint32) []byte {
 	return waveform
 }
 
-// Generate QR as ASCII art for HTML display
+// Generate QR as HTML image or link
 func generateQRHTML(qrString string) string {
-	// Simple QR to ASCII conversion using basic blocks
-	return strings.ReplaceAll(strings.ReplaceAll(qrString, "█", "██"), " ", "  ")
+	// Generate QR code as image URL
+	return fmt.Sprintf(`
+		<div class="qr-container">
+			<img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=%s" 
+				 alt="QR Code" 
+				 style="border: 1px solid #ddd; padding: 10px; background: white;">
+			<br>
+			<small style="margin-top: 10px; display: block; color: #666;">
+				Si el QR no carga, usa este texto:<br>
+				<code style="font-size: 10px; word-break: break-all;">%s</code>
+			</small>
+		</div>
+	`, qrString, qrString)
 }
 
 // Start REST API server with all endpoints
 func startRESTServer(port string) {
 	// Health check endpoint
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `
 		<html>
 		<head>
@@ -295,7 +305,7 @@ func startRESTServer(port string) {
 		needsAuthStatus := needsAuth
 		mu.RUnlock()
 
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 		if qr != "" && needsAuthStatus {
 			fmt.Fprintf(w, `
