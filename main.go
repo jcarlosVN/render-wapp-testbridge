@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/skip2/go-qrcode"
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
@@ -238,12 +240,19 @@ func generateSimpleWaveform(duration uint32) []byte {
 	return waveform
 }
 
-// Generate QR as image URL using qr-server.com API
-func generateQRImageURL(qrString string) string {
-	// Use online QR generator service - qr-server.com
-	// This generates a proper QR code image that can be scanned
-	return fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", 
-		strings.ReplaceAll(qrString, " ", "%20"))
+// Generate QR as base64 data URL using native Go QR library
+func generateQRDataURL(qrString string) string {
+	// Generate QR code PNG using go-qrcode library
+	// This handles the WhatsApp binary data properly
+	png, err := qrcode.Encode(qrString, qrcode.Medium, 300)
+	if err != nil {
+		// Fallback to text if QR generation fails
+		return ""
+	}
+	
+	// Convert to base64 data URL for HTML display
+	encoded := base64.StdEncoding.EncodeToString(png)
+	return fmt.Sprintf("data:image/png;base64,%s", encoded)
 }
 
 // Start REST API server with all endpoints
@@ -299,7 +308,17 @@ func startRESTServer(port string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 		if qr != "" && needsAuthStatus {
-			qrImageURL := generateQRImageURL(qr)
+			qrDataURL := generateQRDataURL(qr)
+			if qrDataURL == "" {
+				// Fallback if QR generation fails
+				fmt.Fprintf(w, `
+				<html><body style="text-align: center; padding: 20px; font-family: Arial;">
+					<h2>❌ Error generando QR</h2>
+					<p>Refresca la página para intentar de nuevo</p>
+					<script>setTimeout(() => location.reload(), 3000);</script>
+				</body></html>`)
+				return
+			}
 			fmt.Fprintf(w, `
 			<html>
 			<head>
@@ -344,7 +363,7 @@ func startRESTServer(port string) {
 					<p><a href="/">← Volver al inicio</a></p>
 				</div>
 			</body>
-			</html>`, qrImageURL)
+			</html>`, qrDataURL)
 		} else if client != nil && client.IsConnected() {
 			fmt.Fprintf(w, `
 			<html>
