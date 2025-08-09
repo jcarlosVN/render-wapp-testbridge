@@ -15,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/skip2/go-qrcode"
@@ -29,11 +31,13 @@ import (
 )
 
 var (
-	client    *whatsmeow.Client
-	currentQR string
-	needsAuth bool
-	startTime time.Time
-	mu        sync.RWMutex
+	client      *whatsmeow.Client
+	currentQR   string
+	needsAuth   bool
+	startTime   time.Time
+	mu          sync.RWMutex
+	validTokens map[string]time.Time // Store valid session tokens
+	tokensMu    sync.RWMutex
 )
 
 // SendMessageRequest represents the request body for the send message API
@@ -351,6 +355,50 @@ func generateSimpleWaveform(duration uint32) []byte {
 	return waveform
 }
 
+// Generate session token
+func generateSessionToken() string {
+	bytes := make([]byte, 16)
+	cryptorand.Read(bytes)
+	return hex.EncodeToString(bytes)
+}
+
+// Validate session token
+func isValidSessionToken(sessionToken string) bool {
+	tokensMu.RLock()
+	defer tokensMu.RUnlock()
+	
+	if validTokens == nil {
+		return false
+	}
+	
+	expires, exists := validTokens[sessionToken]
+	if !exists {
+		return false
+	}
+	
+	// Check if token has expired (1 hour validity)
+	if time.Now().After(expires) {
+		// Clean up expired token
+		delete(validTokens, sessionToken)
+		return false
+	}
+	
+	return true
+}
+
+// Add valid session token
+func addSessionToken(sessionToken string) {
+	tokensMu.Lock()
+	defer tokensMu.Unlock()
+	
+	if validTokens == nil {
+		validTokens = make(map[string]time.Time)
+	}
+	
+	// Token valid for 1 hour
+	validTokens[sessionToken] = time.Now().Add(1 * time.Hour)
+}
+
 // Generate QR as base64 data URL using native Go QR library
 func generateQRDataURL(qrString string) string {
 	// Generate QR code PNG using go-qrcode library
@@ -396,7 +444,7 @@ func startRESTServer(port string) {
 				</div>
 				<p>
 					<a href="/api/status">📊 Status JSON</a>
-					<a href="#" onclick="goToQR()">📱 QR Code</a>
+					<a href="/login">📱 QR Code</a>
 				</p>
 				<hr>
 				<h3>📋 Endpoints disponibles:</h3>
@@ -408,36 +456,14 @@ func startRESTServer(port string) {
 					🧹 Limpiar base de datos
 				</button>
 				<script>
-					// Get QR token from server
-					async function getQRToken() {
-						try {
-							const response = await fetch('/api/status');
-							const data = await response.json();
-							return data.qr_token || '';
-						} catch (error) {
-							console.error('Error getting token:', error);
-							return '';
-						}
-					}
-					
-					// Navigate to QR with token
-					async function goToQR() {
-						const token = await getQRToken();
-						if (token) {
-							window.location.href = '/api/qr?token=' + token;
-						} else {
-							window.location.href = '/api/qr';
-						}
-					}
-
 					function cleanDatabase() {
 						if (confirm('¿Estás seguro? Esto eliminará la sesión actual y requerirá una nueva autenticación QR.')) {
 							fetch('/api/clean', {method: 'POST'})
 							.then(response => response.json())
 							.then(data => {
-								alert(data.message + ' Redirigiendo al QR...');
+								alert(data.message + ' Redirigiendo al login...');
 								if (data.success) {
-									setTimeout(() => goToQR(), 2000);
+									setTimeout(() => window.location.href = '/login', 2000);
 								}
 							})
 							.catch(error => alert('Error: ' + error));
@@ -451,25 +477,112 @@ func startRESTServer(port string) {
 		getStatusText())
 	})
 
-	// QR Code endpoint - Browser display (with token security)
+	// Login endpoint - Token authentication
+	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			// Process login
+			r.ParseForm()
+			inputToken := r.FormValue("token")
+			expectedToken := os.Getenv("QR_TOKEN")
+			
+			if expectedToken != "" && inputToken == expectedToken {
+				// Generate session token
+				sessionToken := generateSessionToken()
+				addSessionToken(sessionToken)
+				
+				// Set session cookie
+				http.SetCookie(w, &http.Cookie{
+					Name:     "session_token",
+					Value:    sessionToken,
+					Path:     "/",
+					HttpOnly: true,
+					Secure:   true,
+					SameSite: http.SameSiteLaxMode,
+					MaxAge:   3600, // 1 hour
+				})
+				
+				// Redirect to QR
+				http.Redirect(w, r, "/api/qr", http.StatusFound)
+				return
+			} else {
+				// Invalid token, show error
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				fmt.Fprintf(w, `
+				<html>
+				<head>
+					<title>Login - WhatsApp Bridge</title>
+					<style>
+						body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
+						.container { max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+						.error { color: #dc3545; margin: 10px 0; font-weight: bold; }
+						input[type="password"] { width: 100%%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin: 10px 0; }
+						button { background: #25D366; color: white; border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+						button:hover { background: #1ebe57; }
+					</style>
+				</head>
+				<body>
+					<div class="container">
+						<h2>🔐 Acceso al QR Code</h2>
+						<div class="error">❌ Token inválido. Intenta de nuevo.</div>
+						<form method="POST">
+							<input type="password" name="token" placeholder="Ingresa el token de seguridad" required>
+							<br>
+							<button type="submit">🚀 Acceder</button>
+						</form>
+						<p><a href="/">← Volver al inicio</a></p>
+					</div>
+				</body>
+				</html>`)
+				return
+			}
+		}
+		
+		// Show login form
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `
+		<html>
+		<head>
+			<title>Login - WhatsApp Bridge</title>
+			<style>
+				body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
+				.container { max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+				input[type="password"] { width: 100%%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; margin: 10px 0; }
+				button { background: #25D366; color: white; border: none; padding: 12px 25px; border-radius: 5px; cursor: pointer; font-size: 16px; }
+				button:hover { background: #1ebe57; }
+				.info { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; text-align: left; }
+			</style>
+		</head>
+		<body>
+			<div class="container">
+				<h2>🔐 Acceso al QR Code</h2>
+				<div class="info">
+					<strong>🛡️ Seguridad:</strong><br>
+					Para acceder al código QR de WhatsApp, ingresa el token de seguridad configurado en las variables de entorno.
+				</div>
+				<form method="POST">
+					<input type="password" name="token" placeholder="Ingresa el token de seguridad" required>
+					<br>
+					<button type="submit">🚀 Acceder</button>
+				</form>
+				<p><a href="/">← Volver al inicio</a></p>
+			</div>
+		</body>
+		</html>`)
+	})
+
+	// QR Code endpoint - Browser display (with session security)
 	http.HandleFunc("/api/qr", func(w http.ResponseWriter, r *http.Request) {
-		// Check for security token
-		token := r.URL.Query().Get("token")
+		// Check for valid session token
+		sessionCookie, err := r.Cookie("session_token")
 		expectedToken := os.Getenv("QR_TOKEN")
 		
-		if expectedToken != "" && token != expectedToken {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprintf(w, `
-			<html>
-			<head><title>Acceso Denegado</title></head>
-			<body style="text-align: center; padding: 50px; font-family: Arial;">
-				<h1>🔒 Acceso Denegado</h1>
-				<p>Token de seguridad requerido para acceder al QR</p>
-				<p><a href="/">← Volver al inicio</a></p>
-			</body>
-			</html>`)
-			return
+		// If QR_TOKEN is configured, require valid session
+		if expectedToken != "" {
+			if err != nil || !isValidSessionToken(sessionCookie.Value) {
+				// Redirect to login page
+				http.Redirect(w, r, "/login", http.StatusFound)
+				return
+			}
 		}
 		
 		mu.RLock()
@@ -601,20 +714,15 @@ func startRESTServer(port string) {
 		needsAuthStatus := needsAuth
 		mu.RUnlock()
 
-		// Get QR token for secure access
-		qrToken := os.Getenv("QR_TOKEN")
-		qrURL := fmt.Sprintf("https://%s/api/qr", r.Host)
-		if qrToken != "" {
-			qrURL = fmt.Sprintf("https://%s/api/qr?token=%s", r.Host, qrToken)
-		}
+		// QR URL without token (login required separately)
+		qrURL := fmt.Sprintf("https://%s/login", r.Host)
 		
 		status := map[string]interface{}{
 			"connected":    client != nil && client.IsConnected(),
 			"needs_qr":     needsAuthStatus,
 			"has_qr":       qr != "",
 			"uptime":       time.Since(startTime).String(),
-			"qr_url":       qrURL,
-			"qr_token":     qrToken, // Include token for frontend
+			"qr_url":       qrURL, // Points to login page
 			"service":      "whatsapp-render-bridge",
 			"version":      "1.0.0",
 			"timestamp":    time.Now().Unix(),
