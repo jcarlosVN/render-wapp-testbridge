@@ -281,7 +281,9 @@ func recreateClient(logger waLog.Logger) error {
 			logger.Warnf("🔴 Device logged out, need to restart for new QR")
 			go func() {
 				time.Sleep(2 * time.Second)
-				restartAuthentication(logger)
+				if err := recreateClient(logger); err != nil {
+					logger.Errorf("Failed to recreate client after logout: %v", err)
+				}
 			}()
 		}
 	})
@@ -364,45 +366,6 @@ func generateQRDataURL(qrString string) string {
 	return fmt.Sprintf("data:image/png;base64,%s", encoded)
 }
 
-// Restart authentication process when session expires
-func restartAuthentication(logger waLog.Logger) {
-	if client == nil {
-		return
-	}
-	
-	logger.Infof("🔄 Restarting authentication process...")
-	
-	// Disconnect current client
-	client.Disconnect()
-	
-	// Get new QR channel
-	qrChan, _ := client.GetQRChannel(context.Background())
-	err := client.Connect()
-	if err != nil {
-		logger.Errorf("Failed to restart connection: %v", err)
-		return
-	}
-	
-	// Handle new QR codes
-	go func() {
-		for evt := range qrChan {
-			if evt.Event == "code" {
-				mu.Lock()
-				currentQR = evt.Code
-				needsAuth = true
-				mu.Unlock()
-				logger.Infof("📱 New QR Code available at /api/qr")
-			} else if evt.Event == "success" {
-				mu.Lock()
-				needsAuth = false
-				currentQR = ""
-				mu.Unlock()
-				logger.Infof("✅ QR Authentication successful!")
-				break
-			}
-		}
-	}()
-}
 
 // Start REST API server with all endpoints
 func startRESTServer(port string) {
@@ -441,23 +404,10 @@ func startRESTServer(port string) {
 				<p><strong>GET /api/qr</strong> - Ver código QR</p>
 				<p><strong>GET /api/status</strong> - Estado del servicio</p>
 				<hr>
-				<button onclick="forceReauth()" style="background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px;">
-					🔄 Forzar nueva autenticación
-				</button>
 				<button onclick="cleanDatabase()" style="background: #fd7e14; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px;">
 					🧹 Limpiar base de datos
 				</button>
 				<script>
-					function forceReauth() {
-						fetch('/api/reauth', {method: 'POST'})
-						.then(response => response.json())
-						.then(data => {
-							alert('Re-autenticación iniciada. Ve a /api/qr para el nuevo código.');
-							setTimeout(() => window.location.href = '/api/qr', 2000);
-						})
-						.catch(error => alert('Error: ' + error));
-					}
-					
 					function cleanDatabase() {
 						if (confirm('¿Estás seguro? Esto eliminará la sesión actual y requerirá una nueva autenticación QR.')) {
 							fetch('/api/clean', {method: 'POST'})
@@ -649,29 +599,6 @@ func startRESTServer(port string) {
 		})
 	})
 
-	// Force re-authentication endpoint
-	http.HandleFunc("/api/reauth", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		
-		logger := waLog.Stdout("ReAuth", "INFO", true)
-		logger.Infof("🔄 Manual re-authentication requested")
-		
-		mu.Lock()
-		needsAuth = true
-		currentQR = ""
-		mu.Unlock()
-		
-		go restartAuthentication(logger)
-		
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"message": "Re-authentication started. Check /api/qr for new QR code.",
-		})
-	})
 
 	// Send message endpoint
 	http.HandleFunc("/api/send", func(w http.ResponseWriter, r *http.Request) {
@@ -854,7 +781,9 @@ func main() {
 			// Trigger a new QR generation by restarting the auth process
 			go func() {
 				time.Sleep(2 * time.Second)
-				restartAuthentication(logger)
+				if err := recreateClient(logger); err != nil {
+					logger.Errorf("Failed to recreate client after logout: %v", err)
+				}
 			}()
 		}
 	})
@@ -914,7 +843,9 @@ func main() {
 			mu.Lock()
 			needsAuth = true
 			mu.Unlock()
-			restartAuthentication(logger)
+			if err := recreateClient(logger); err != nil {
+				logger.Errorf("Failed to recreate client: %v", err)
+			}
 		}
 	}
 
