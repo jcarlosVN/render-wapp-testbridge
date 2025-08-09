@@ -327,7 +327,7 @@ func startRESTServer(port string) {
 				<script>
 					setTimeout(() => {
 						location.reload();
-					}, 5000);
+					}, 10000);
 				</script>
 			</head>
 			<body>
