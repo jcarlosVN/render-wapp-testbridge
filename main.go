@@ -238,32 +238,18 @@ func generateSimpleWaveform(duration uint32) []byte {
 	return waveform
 }
 
-// Generate QR as HTML with proper formatting
-func generateQRHTML(qrString string) string {
-	// Create a more visual QR representation using HTML/CSS
-	return fmt.Sprintf(`
-		<div style="background: white; padding: 20px; border-radius: 10px; margin: 20px 0; border: 2px solid #007bff;">
-			<p style="color: #007bff; font-weight: bold; margin-bottom: 15px;">📱 Código QR para WhatsApp Web:</p>
-			<div style="background: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #dee2e6; margin: 15px 0;">
-				<div style="font-family: 'Courier New', monospace; font-size: 10px; line-height: 10px; word-break: break-all; text-align: center; color: #495057;">%s</div>
-			</div>
-			<div style="background: #e3f2fd; padding: 15px; border-radius: 5px; border-left: 4px solid #2196f3;">
-				<p style="margin: 0; font-size: 14px; color: #1976d2;">
-					💡 <strong>Opciones para escanear:</strong><br>
-					• Usa la cámara de WhatsApp Web directamente<br>
-					• Copia el código y usa una app lectora de QR<br>
-					• Para mejor experiencia visual, considera instalar: <code>go get github.com/skip2/go-qrcode</code>
-				</p>
-			</div>
-		</div>
-	`, qrString)
+// Generate QR as image URL using qr-server.com API
+func generateQRImageURL(qrString string) string {
+	// Use online QR generator service - qr-server.com
+	// This generates a proper QR code image that can be scanned
+	return fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", 
+		strings.ReplaceAll(qrString, " ", "%20"))
 }
 
-// Alternative: Generate QR as image URL (requires qrcode library)
-func generateQRImageURL(qrString string) string {
-	// This would require: go get github.com/skip2/go-qrcode
-	// For now, we'll provide an online QR generator as fallback
-	return fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", qrString)
+// Generate QR as ASCII art for HTML display (fallback)
+func generateQRHTML(qrString string) string {
+	// Simple QR to ASCII conversion using basic blocks
+	return strings.ReplaceAll(strings.ReplaceAll(qrString, "█", "██"), " ", "  ")
 }
 
 // Start REST API server with all endpoints
@@ -276,7 +262,7 @@ func startRESTServer(port string) {
 		<head>
 			<title>WhatsApp Render Bridge</title>
 			<meta charset="UTF-8">
-			<meta name="viewport" content="width=device-width, initial-scale=1.0">
+			<meta name="viewport" content="width=device-width, initial-scale=1">
 			<style>
 				body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
 				.container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
@@ -318,9 +304,10 @@ func startRESTServer(port string) {
 		needsAuthStatus := needsAuth
 		mu.RUnlock()
 
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 		if qr != "" && needsAuthStatus {
+			qrImageURL := generateQRImageURL(qr)
 			fmt.Fprintf(w, `
 			<html>
 			<head>
@@ -329,70 +316,39 @@ func startRESTServer(port string) {
 				<meta name="viewport" content="width=device-width, initial-scale=1">
 				<style>
 					body { font-family: Arial, sans-serif; text-align: center; padding: 10px; background: #f5f5f5; }
-					.container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-					.qr { font-family: monospace; font-size: 10px; line-height: 12px; margin: 20px 0; background: #f8f9fa; padding: 15px; border: 1px solid #dee2e6; border-radius: 5px; word-break: break-all; }
-					.qr-image { margin: 20px 0; }
-					.qr-image img { max-width: 250px; border: 2px solid #007bff; border-radius: 10px; }
+					.container { max-width: 400px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+					.qr-image { margin: 20px 0; padding: 15px; background: white; border: 2px solid #25D366; border-radius: 10px; }
+					.qr-image img { max-width: 100%%; height: auto; border-radius: 5px; }
 					.status { color: #dc3545; font-weight: bold; margin: 15px 0; }
-					.instructions { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; }
-					.refresh { color: #28a745; }
-					.qr-notice { background: #fff3cd; color: #856404; padding: 10px; border-radius: 5px; margin: 10px 0; font-size: 14px; }
-					.tabs { display: flex; margin: 20px 0; border-bottom: 1px solid #dee2e6; }
-					.tab { padding: 10px 20px; cursor: pointer; border: none; background: none; font-size: 14px; }
-					.tab.active { border-bottom: 2px solid #007bff; color: #007bff; font-weight: bold; }
-					.tab-content { display: none; }
-					.tab-content.active { display: block; }
+					.instructions { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; text-align: left; }
+					.refresh { color: #28a745; font-weight: bold; }
+					.whatsapp-color { color: #25D366; }
 				</style>
 				<script>
-					function showTab(tabName) {
-						document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-						document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-						document.getElementById(tabName + 'Tab').classList.add('active');
-						document.getElementById(tabName + 'Content').classList.add('active');
-					}
 					setTimeout(() => {
 						location.reload();
-					}, 10000);
+					}, 5000);
 				</script>
 			</head>
 			<body>
 				<div class="container">
-					<h2>📱 Escanea con WhatsApp móvil</h2>
+					<h2><span class="whatsapp-color">📱 Escanea con WhatsApp móvil</span></h2>
 					<div class="status">🔴 Desconectado - Necesita autenticación</div>
-					
-					<div class="tabs">
-						<button class="tab active" id="imageTab" onclick="showTab('image')">📷 QR Visual</button>
-						<button class="tab" id="textTab" onclick="showTab('text')">📝 Código Texto</button>
+					<div class="qr-image">
+						<img src="%s" alt="QR Code para WhatsApp Web" />
 					</div>
-					
-					<div id="imageContent" class="tab-content active">
-						<div class="qr-image">
-							<img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&margin=10&data=%s" 
-								 alt="QR Code para WhatsApp" 
-								 onerror="this.style.display='none'; document.getElementById('textContent').classList.add('active'); document.getElementById('textTab').classList.add('active'); document.getElementById('imageTab').classList.remove('active');">
-						</div>
-						<p style="color: #6c757d; font-size: 12px;">QR generado usando api.qrserver.com</p>
-					</div>
-					
-					<div id="textContent" class="tab-content">
-						<div class="qr-notice">
-							💡 <strong>Si la imagen no carga:</strong> Usa el código de texto de abajo con cualquier app lectora de QR
-						</div>
-						<div class="qr">%s</div>
-					</div>
-					
 					<div class="instructions">
 						<strong>📋 Instrucciones:</strong><br>
 						1. Abre WhatsApp en tu teléfono<br>
-						2. Toca Menú ⋮ → WhatsApp Web<br>
-						3. Escanea el código QR de arriba<br>
-						4. Si tienes problemas, cambia a la pestaña "Código Texto"
+						2. Toca Menú ⋮ > WhatsApp Web<br>
+						3. Escanea este código QR<br>
+						4. ¡Listo! Podrás enviar mensajes
 					</div>
-					<div class="refresh">🔄 Auto-refresh en 10 segundos...</div>
+					<div class="refresh">🔄 Auto-refresh en 5 segundos...</div>
 					<p><a href="/">← Volver al inicio</a></p>
 				</div>
 			</body>
-			</html>`, qr, qr)
+			</html>`, qrImageURL)
 		} else if client != nil && client.IsConnected() {
 			fmt.Fprintf(w, `
 			<html>
@@ -405,11 +361,12 @@ func startRESTServer(port string) {
 					.container { max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
 					.status { color: #28a745; font-weight: bold; font-size: 18px; margin: 20px 0; }
 					.uptime { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; }
+					.whatsapp-color { color: #25D366; }
 				</style>
 			</head>
 			<body>
 				<div class="container">
-					<h2>✅ WhatsApp Conectado</h2>
+					<h2><span class="whatsapp-color">✅ WhatsApp Conectado</span></h2>
 					<div class="status">🟢 Servicio activo y funcionando</div>
 					<div class="uptime">
 						<strong>⏱️ Uptime:</strong> %s
@@ -433,6 +390,7 @@ func startRESTServer(port string) {
 					body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
 					.container { max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
 					.status { color: #ffc107; font-weight: bold; font-size: 16px; margin: 20px 0; }
+					.loading { color: #6c757d; }
 				</style>
 				<script>
 					setTimeout(() => {
@@ -442,7 +400,7 @@ func startRESTServer(port string) {
 			</head>
 			<body>
 				<div class="container">
-					<h2>⏳ Iniciando conexión...</h2>
+					<h2><span class="loading">⏳ Iniciando conexión...</span></h2>
 					<div class="status">🟡 Estableciendo conexión con WhatsApp...</div>
 					<p>Por favor espera unos segundos.</p>
 					<p>🔄 Auto-refresh en 3 segundos...</p>
@@ -471,7 +429,7 @@ func startRESTServer(port string) {
 			"timestamp":    time.Now().Unix(),
 		}
 		
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(status)
 	})
 
@@ -508,7 +466,7 @@ func startRESTServer(port string) {
 		fmt.Printf("📨 Result: %v - %s\n", success, message)
 
 		// Set response headers
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Type", "application/json")
 
 		// Set appropriate status code
 		if !success {
