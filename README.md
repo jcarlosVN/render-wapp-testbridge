@@ -9,6 +9,7 @@ Un bridge API REST para WhatsApp optimizado para deployment en Render.com
 - 🚀 **Deploy automático** - GitHub → Render sin configuración
 - 💰 **Costo-efectivo** - Solo $7/mes en Render Starter
 - 🔄 **Auto-healing** - Re-conecta automáticamente si pierde sesión
+- ⚡ **Sin downtime** - Limpieza de base de datos sin reiniciar servicio
 
 ## 📋 Endpoints Disponibles
 
@@ -18,10 +19,15 @@ Un bridge API REST para WhatsApp optimizado para deployment en Render.com
 | `GET` | `/api/qr` | Ver código QR para autenticación |
 | `GET` | `/api/status` | Estado del servicio (JSON) |
 | `POST` | `/api/send` | Enviar mensajes WhatsApp |
+| `POST` | `/api/reauth` | Forzar nueva autenticación |
+| `POST` | `/api/clean` | Limpiar base de datos corrupta (⚡ sin downtime) |
 
 ## 🚀 Deploy en Render
 
 ### Paso 1: Preparar repositorio
+
+⚠️ **CRÍTICO**: Debe incluir `go.sum` en el repositorio
+
 ```bash
 # Clonar o crear repositorio
 git clone https://github.com/tu-usuario/whatsapp-render.git
@@ -30,22 +36,54 @@ cd whatsapp-render
 # Copiar archivos del proyecto
 cp -r whatsapp-render/* .
 
-# Commit inicial
+# IMPORTANTE: Generar go.sum localmente antes de subir
+go mod download
+go mod tidy
+
+# Verificar que go.sum fue creado
+ls -la go.sum
+
+# Commit inicial (DEBE incluir go.sum)
 git add .
 git commit -m "Initial WhatsApp Render Bridge"
 git push origin main
 ```
 
+**📝 Nota**: Si no incluyes `go.sum`, Render fallará con este error:
+```
+missing go.sum entry for module providing package google.golang.org/protobuf/proto; to add:
+go mod download google.golang.org/protobuf
+==> Build failed 😞
+```
+
 ### Paso 2: Crear servicio en Render
+
+⚠️ **Importante**: Render puede no leer automáticamente el `render.yaml`. Si esto ocurre, configura manualmente:
+
 1. Ve a [render.com](https://render.com) y crea cuenta
 2. **New** → **Web Service**
 3. Conecta tu repositorio GitHub
-4. Render detectará automáticamente `render.yaml`
-5. Click **Deploy** 
+4. **Si Render detecta automáticamente `render.yaml`**: Click **Deploy**
+5. **Si NO detecta el .yaml (configuración manual)** - Usa estos valores exactos:
+   - **Language**: Go ###aparece solo
+   - **Branch**: main ###aparece solo
+   - **Build Command**: `go mod download && go build -o main main.go` ###cambiar como dice aquí
+   - **Start Command**: `./main` ###cambiar como dice aquí
+   - **Environment Variables**: 
+     - `QR_TOKEN`: Genera un token seguro (ej: `abcd1234efgh5678`)
+   - Click **Deploy**
+
+### 🔒 Token de Seguridad QR
+
+El sistema incluye protección por token para el endpoint `/api/qr`:
+- **Automático**: `render.yaml` genera un token seguro automáticamente
+- **Manual**: Si configuras manualmente, agrega variable `QR_TOKEN` con un valor aleatorio
+- **Sin token**: Si no defines `QR_TOKEN`, el QR será público (no recomendado) 
 
 ### Paso 3: Primera autenticación
 1. Una vez desplegado, ve a `https://tu-app.onrender.com`
-2. Click **📱 QR Code** o ve a `/api/qr`
+2. Click **📱 QR Code** (incluye automáticamente el token de seguridad)
+3. **Alternativa directa**: Ve a `/api/qr?token=TU_TOKEN` (reemplaza con tu token)
 3. Escanea el QR con WhatsApp móvil:
    - WhatsApp → Menú ⋮ → **WhatsApp Web**
    - **Escanear código QR**
@@ -89,6 +127,23 @@ curl -X POST https://tu-app.onrender.com/api/send \
 curl https://tu-app.onrender.com/api/status
 ```
 
+### Forzar nueva autenticación
+```bash
+curl -X POST https://tu-app.onrender.com/api/reauth
+```
+
+### Limpiar base de datos corrupta (⚡ Sin downtime)
+```bash
+curl -X POST https://tu-app.onrender.com/api/clean
+```
+**Respuesta**:
+```json
+{
+  "success": true,
+  "message": "Database cleaned successfully. New QR code will be available shortly at /api/qr"
+}
+```
+
 **Respuesta ejemplo:**
 ```json
 {
@@ -119,6 +174,29 @@ Cuando expire la sesión:
 2. **Ve a**: `https://tu-app.onrender.com/api/qr`
 3. **Escanea** el nuevo QR code
 4. **Funciona** otros ~20 días automáticamente
+
+## ⚡ Limpieza de Base de Datos (Sin Downtime)
+
+Si encuentras errores de base de datos corrupta:
+
+### 🖱️ **Método Web** (Recomendado):
+1. Ve a `https://tu-app.onrender.com`
+2. Click **🧹 Limpiar base de datos**
+3. Confirma la acción
+4. **Automático**: Redirige al nuevo QR en 2 segundos
+5. Escanea y listo ✅
+
+### 🔧 **Método API**:
+```bash
+curl -X POST https://tu-app.onrender.com/api/clean
+# Respuesta inmediata, nuevo QR disponible en ~2-3 segundos
+```
+
+**⚡ Ventajas**: 
+- Sin reinicio del servicio
+- Sin downtime (0 segundos offline)
+- Proceso automático de 2-3 segundos
+- Redirección automática al QR
 
 ## 🧪 Prueba local
 
@@ -152,11 +230,42 @@ whatsapp-render/
 
 ## 🐛 Solución de problemas
 
-### ❌ "Build failed"
-```bash
-# Verificar que render.yaml esté en la raíz
-# Verificar go.mod tiene las dependencias correctas
+### ❌ "Build failed" - Missing go.sum
+**Error completo**:
 ```
+main.go:27:2: missing go.sum entry for module providing package google.golang.org/protobuf/proto; to add:
+go mod download google.golang.org/protobuf
+==> Build failed 😞
+```
+
+**Solución**:
+```bash
+# En tu máquina local:
+cd tu-proyecto
+go mod download
+go mod tidy
+git add go.sum
+git commit -m "Add missing go.sum file"
+git push origin main
+```
+
+### ❌ "Build failed" - render.yaml no detectado
+**Síntomas**: Render no detecta configuración automática
+
+**Solución**: Configuración manual en Render:
+- **Language**: Go
+- **Build Command**: `go mod download && go build -o main main.go`
+- **Start Command**: `./main`
+
+### ❌ "FOREIGN KEY constraint failed" 
+**Error**: `Failed to pair device: failed to store main device identity: FOREIGN KEY constraint failed`
+
+**Solución automática**: El código detecta y limpia automáticamente
+**Solución manual** (⚡ Sin downtime - 2-3 segundos):
+1. Ve a tu app: `https://tu-app.onrender.com`
+2. Click **🧹 Limpiar base de datos**
+3. **Automático**: Te redirige al QR en 2 segundos
+4. Escanea el nuevo código QR
 
 ### ❌ "Service unhealthy"
 - Ve a `/api/status` para ver el estado

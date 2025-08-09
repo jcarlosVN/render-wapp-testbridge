@@ -13,6 +13,8 @@ services:
         value: "1.21"
       - key: CGO_ENABLED
         value: "1"
+      - key: QR_TOKEN
+        generateValue: true  # Render generará un token seguro automáticamente
     # Health check para que Render sepa que el servicio está funcionando
     healthCheckPath: /api/status
     # Auto-deploy desde GitHub
