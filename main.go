@@ -248,11 +248,12 @@ func generateQRHTML(qrString string) string {
 func startRESTServer(port string) {
 	// Health check endpoint
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `
 		<html>
 		<head>
 			<title>WhatsApp Render Bridge</title>
+			<meta charset="UTF-8">
 			<style>
 				body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
 				.container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
@@ -294,49 +295,75 @@ func startRESTServer(port string) {
 		needsAuthStatus := needsAuth
 		mu.RUnlock()
 
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 		if qr != "" && needsAuthStatus {
 			fmt.Fprintf(w, `
 			<html>
 			<head>
 				<title>WhatsApp QR Code</title>
+				<meta charset="UTF-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1">
 				<style>
 					body { font-family: Arial, sans-serif; text-align: center; padding: 10px; background: #f5f5f5; }
 					.container { max-width: 400px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-					.qr { font-family: monospace; font-size: 6px; line-height: 6px; margin: 20px 0; background: white; padding: 10px; border: 1px solid #ddd; }
+					.qr-container { background: white; padding: 20px; margin: 20px 0; border: 2px solid #007bff; border-radius: 10px; }
+					.qr-image { max-width: 256px; height: 256px; margin: 0 auto; }
 					.status { color: #dc3545; font-weight: bold; margin: 15px 0; }
 					.instructions { background: #e7f3ff; padding: 15px; border-radius: 5px; margin: 15px 0; }
 					.refresh { color: #28a745; }
+					.qr-text { font-family: monospace; font-size: 10px; word-break: break-all; background: #f8f9fa; padding: 10px; border-radius: 5px; }
 				</style>
+				<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 				<script>
 					setTimeout(() => {
 						location.reload();
-					}, 5000);
+					}, 10000);
+					
+					window.onload = function() {
+						const qrText = '%s';
+						const canvas = document.getElementById('qrcode');
+						QRCode.toCanvas(canvas, qrText, {
+							width: 256,
+							margin: 2,
+							color: {
+								dark: '#000000',
+								light: '#FFFFFF'
+							}
+						}, function (error) {
+							if (error) {
+								console.error(error);
+								document.getElementById('qr-fallback').style.display = 'block';
+							}
+						});
+					};
 				</script>
 			</head>
 			<body>
 				<div class="container">
 					<h2>📱 Escanea con WhatsApp móvil</h2>
 					<div class="status">🔴 Desconectado - Necesita autenticación</div>
-					<div class="qr">%s</div>
+					<div class="qr-container">
+						<canvas id="qrcode" class="qr-image"></canvas>
+						<div id="qr-fallback" style="display:none;" class="qr-text">%s</div>
+					</div>
 					<div class="instructions">
 						<strong>📋 Instrucciones:</strong><br>
 						1. Abre WhatsApp en tu teléfono<br>
 						2. Toca Menú ⋮ > WhatsApp Web<br>
 						3. Escanea este código QR
 					</div>
-					<div class="refresh">🔄 Auto-refresh en 5 segundos...</div>
+					<div class="refresh">🔄 Auto-refresh en 10 segundos...</div>
 					<p><a href="/">← Volver al inicio</a></p>
 				</div>
 			</body>
-			</html>`, generateQRHTML(qr))
+			</html>`, qr, qr)
 		} else if client != nil && client.IsConnected() {
 			fmt.Fprintf(w, `
 			<html>
 			<head>
 				<title>WhatsApp Status</title>
+				<meta charset="UTF-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1">
 				<style>
 					body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
@@ -365,6 +392,7 @@ func startRESTServer(port string) {
 			<html>
 			<head>
 				<title>WhatsApp Status</title>
+				<meta charset="UTF-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1">
 				<style>
 					body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: #f5f5f5; }
