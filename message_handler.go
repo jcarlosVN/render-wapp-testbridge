@@ -58,6 +58,9 @@ func HandleIncomingMessage(msg *events.Message, logger waLog.Logger) {
 		logger.Warnf("Could not extract phone number from JID: %s", senderJID)
 		return
 	}
+	
+	// Debug log to verify phone number format
+	logger.Infof("📱 Extracted phone: %s from JID: %s", phoneNumber, senderJID)
 
 	// Log incoming message to terminal
 	logIncomingMessage(content, phoneNumber, logger)
