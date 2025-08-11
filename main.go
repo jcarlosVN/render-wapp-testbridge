@@ -270,7 +270,7 @@ func recreateClient(logger waLog.Logger) error {
 	
 	// Add event handlers to new client
 	client.AddEventHandler(func(evt interface{}) {
-		switch evt.(type) {
+		switch v := evt.(type) {
 		case *events.Connected:
 			mu.Lock()
 			needsAuth = false
@@ -289,6 +289,9 @@ func recreateClient(logger waLog.Logger) error {
 					logger.Errorf("Failed to recreate client after logout: %v", err)
 				}
 			}()
+		case *events.Message:
+			// 🆕 NUEVO - Capturar mensajes entrantes y enviar a servidor externo
+			go HandleIncomingMessage(v, logger)
 		}
 	})
 	
@@ -935,9 +938,9 @@ func main() {
 		return
 	}
 
-	// Event handling for connection and QR
+	// Event handling for connection, QR, and incoming messages
 	client.AddEventHandler(func(evt interface{}) {
-		switch evt.(type) {
+		switch v := evt.(type) {
 		case *events.Connected:
 			mu.Lock()
 			needsAuth = false
@@ -957,6 +960,9 @@ func main() {
 					logger.Errorf("Failed to recreate client after logout: %v", err)
 				}
 			}()
+		case *events.Message:
+			// 🆕 NUEVO - Capturar mensajes entrantes y enviar a servidor externo
+			go HandleIncomingMessage(v, logger)
 		}
 	})
 
