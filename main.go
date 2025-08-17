@@ -420,8 +420,21 @@ func generateQRDataURL(qrString string) string {
 
 // Start REST API server with all endpoints
 func startRESTServer(port string) {
-	// Health check endpoint
+	// Health check endpoint - Now requires authentication
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Check for valid session token
+		sessionCookie, err := r.Cookie("session_token")
+		expectedToken := os.Getenv("QR_TOKEN")
+		
+		// If QR_TOKEN is configured, require valid session
+		if expectedToken != "" {
+			if err != nil || !isValidSessionToken(sessionCookie.Value) {
+				// Redirect to login page
+				http.Redirect(w, r, "/login", http.StatusFound)
+				return
+			}
+		}
+		
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `
 		<html>
@@ -436,10 +449,15 @@ func startRESTServer(port string) {
 				.pending { background: #fff3cd; color: #856404; }
 				a { color: #007bff; text-decoration: none; margin: 0 10px; }
 				a:hover { text-decoration: underline; }
+				.logout-btn { background: #dc3545; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer; margin: 5px; float: right; }
+				.logout-btn:hover { background: #c82333; }
 			</style>
 		</head>
 		<body>
 			<div class="container">
+				<div style="text-align: right;">
+					<button class="logout-btn" onclick="logout()">🚪 Cerrar Sesión</button>
+				</div>
 				<h1>🚀 WhatsApp Render Bridge</h1>
 				<p>API REST para envío de mensajes WhatsApp</p>
 				<div class="status %s">
@@ -447,7 +465,7 @@ func startRESTServer(port string) {
 				</div>
 				<p>
 					<a href="/api/status">📊 Status JSON</a>
-					<a href="/login">📱 QR Code</a>
+					<a href="/api/qr">📱 QR Code</a>
 				</p>
 				<hr>
 				<h3>📋 Endpoints disponibles:</h3>
@@ -470,6 +488,15 @@ func startRESTServer(port string) {
 								}
 							})
 							.catch(error => alert('Error: ' + error));
+						}
+					}
+					
+					function logout() {
+						if (confirm('¿Estás seguro que quieres cerrar la sesión?')) {
+							// Clear session cookie
+							document.cookie = "session_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+							// Redirect to login
+							window.location.href = '/login';
 						}
 					}
 				</script>
@@ -504,8 +531,8 @@ func startRESTServer(port string) {
 					MaxAge:   3600, // 1 hour
 				})
 				
-				// Redirect to QR
-				http.Redirect(w, r, "/api/qr", http.StatusFound)
+				// Redirect to home page
+				http.Redirect(w, r, "/", http.StatusFound)
 				return
 			} else {
 				// Invalid token, show error
@@ -735,11 +762,28 @@ func startRESTServer(port string) {
 		json.NewEncoder(w).Encode(status)
 	})
 
-	// Clean database endpoint (for fixing corruption)
+	// Clean database endpoint (for fixing corruption) - Now requires authentication
 	http.HandleFunc("/api/clean", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
+		}
+		
+		// Check for valid session token when called via web interface
+		sessionCookie, err := r.Cookie("session_token")
+		expectedToken := os.Getenv("QR_TOKEN")
+		
+		// If QR_TOKEN is configured, require valid session for web interface
+		if expectedToken != "" {
+			if err != nil || !isValidSessionToken(sessionCookie.Value) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"success": false,
+					"message": "Authentication required. Please login first.",
+				})
+				return
+			}
 		}
 		
 		logger := waLog.Stdout("Clean", "INFO", true)
